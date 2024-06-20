@@ -1,10 +1,12 @@
-import config
+import logging
+import threading
+import time
+import traceback
 from enum import Enum
 
-import psycopg2
+import psycopg2.pool
 
-import logging
-import traceback
+import config
 
 
 class Status(Enum):
@@ -15,9 +17,11 @@ class Status(Enum):
 
 
 DROP_TABLE_QUERY = "DROP TABLE IF EXISTS test.work;"
+DELETE_DATA_QUERY = "DELETE FROM test.work"
 CREATE_TABLE_QUERY = "CREATE TABLE IF NOT EXISTS test.work (id SERIAL PRIMARY KEY, STATUS VARCHAR(32), JOB_NAME VARCHAR(32));"
-INITIALIZE_DATA_QUERY = "INSERT INTO test.work (status, job_name) VALUES (%s, %s);"
+INSERT_DATA_QUERY = "INSERT INTO test.work (id, status, job_name) VALUES (%s, %s, %s);"
 STATUS_CHANGE_QUERY = "UPDATE test.work SET status=%s WHERE id=%s AND status=%s;"
+STATUS_CHANGE_NO_CHECK_QUERY = "UPDATE test.work SET status=%s WHERE id=%s;"
 
 
 def set_log():
@@ -25,64 +29,93 @@ def set_log():
                         format='%(asctime)s %(levelname)s:%(message)s')
 
 
-def get_cursor_by_db_connect():
+def get_db_connection_pool():
     try:
-        db = psycopg2.connect(host='localhost', dbname='postgres', user=config.user, password=config.password,
-                              port=5432)
-
-        db.set_client_encoding('UTF8')
-
-        db_cursor = db.cursor()
+        db_conn_pool = psycopg2.pool.ThreadedConnectionPool(
+            50, 100,
+            host='localhost',
+            dbname='postgres',
+            user=config.user,
+            password=config.password,
+            port=5432
+        )
 
     except:
         print(traceback.format_exc())
         logging.error(traceback.format_exc())
     else:
-        return db_cursor
+        return db_conn_pool
 
 
-def use_cursor_by_db_connect(query, params=None):
-    db = ''
+def initialize_data(db_conn):
     try:
-        db = psycopg2.connect(host='localhost', dbname='postgres', user=config.user, password=config.password,
-                              port=5432)
+        db_conn.cursor().execute(CREATE_TABLE_QUERY)
 
-        db.set_client_encoding('UTF8')
+        db_conn.cursor().execute(DELETE_DATA_QUERY)
 
-        db_cursor = db.cursor()
-        if params:
-            cursor.execute(query, params)
-        else:
-            cursor.execute(query)
+        for i in range(1, 21):
+            db_conn.cursor().execute(INSERT_DATA_QUERY, (i, Status.PENDING.value, '배치 JOB' + str(i)))
 
-        db_cursor.commit()
+        db_conn.commit()
+
+        db_conn.close()
+
+    except:
+        logging.error(traceback.format_exc())
+        print(traceback.format_exc())
+
+
+def change_status_job(db_conn, t_id, former_status, later_status):
+    db_conn.cursor().execute(STATUS_CHANGE_QUERY, (later_status, t_id, former_status))
+
+    db_conn.commit()
+
+    db_conn.cursor().close()
+
+
+def change_status_job_no_check(db_conn, t_id, later_status):
+    db_conn.cursor().execute(STATUS_CHANGE_NO_CHECK_QUERY, (later_status, t_id))
+
+    db_conn.commit()
+
+    db_conn.cursor().close()
+
+
+def batch_worker(db_conn_pool, t_id, msg):
+
+    db_conn = db_conn_pool.getconn()
+
+    try:
+        print(f'{msg}가 작업을 시작했습니다.')
+        change_status_job(db_conn, t_id, Status.PENDING.value, Status.RUNNING.value)
+
+        time.sleep(100)
+
+        change_status_job(db_conn, t_id, Status.RUNNING.value, Status.SUCCESS.value)
 
     except:
         print(traceback.format_exc())
         logging.error(traceback.format_exc())
+        change_status_job_no_check(db_conn, t_id, Status.FAILURE.value)
+
     finally:
-        if db:
-            db.close()
+        db_conn_pool.putconn(db_conn_pool)
 
 
 if __name__ == '__main__':
     set_log()
 
-    # use_cursor_by_db_connect(DROP_TABLE_QUERY)
-    #
-    # use_cursor_by_db_connect(CREATE_TABLE_QUERY)
-    #
-    # for i in range(1, 21):
-    #     use_cursor_by_db_connect(INITIALIZE_DATA_QUERY, (Status.PENDING.value, '배치 JOB' + str(i)))
-    #
-    # for i in range(1, 21):
-    #     use_cursor_by_db_connect(STATUS_CHANGE_QUERY, (Status.RUNNING.value, i, Status.PENDING.value))
+    conn_pool = get_db_connection_pool()
 
-    cursor = get_cursor_by_db_connect()
-    cursor.execute('SELECT * FROM test.work;')
-    data = cursor.fetchall()
-    print(len(data))
-    first_status = data[0][1]
-    print(first_status)
+    conn = conn_pool.getconn()
 
+    initialize_data(conn)
 
+    conn_pool.putconn()
+
+    for i in range(1, 21):
+        msg = f'{i}번 스레드'
+        t = threading.Thread(target=batch_worker, name=f'Thread-{i}', args=(conn_pool, i, msg))
+        t.start()
+
+    conn_pool.closeall()
