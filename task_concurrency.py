@@ -58,8 +58,6 @@ def initialize_data(db_conn):
 
         db_conn.commit()
 
-        db_conn.close()
-
     except:
         logging.error(traceback.format_exc())
         print(traceback.format_exc())
@@ -68,21 +66,16 @@ def initialize_data(db_conn):
 def change_status_job(db_conn, t_id, former_status, later_status):
     db_conn.cursor().execute(STATUS_CHANGE_QUERY, (later_status, t_id, former_status))
 
-    db_conn.commit()
-
-    db_conn.cursor().close()
+    # db_conn.commit()
 
 
 def change_status_job_no_check(db_conn, t_id, later_status):
     db_conn.cursor().execute(STATUS_CHANGE_NO_CHECK_QUERY, (later_status, t_id))
 
-    db_conn.commit()
-
-    db_conn.cursor().close()
+    # db_conn.commit()
 
 
 def batch_worker(db_conn_pool, t_id, msg):
-
     db_conn = db_conn_pool.getconn()
 
     try:
@@ -92,14 +85,16 @@ def batch_worker(db_conn_pool, t_id, msg):
         time.sleep(100)
 
         change_status_job(db_conn, t_id, Status.RUNNING.value, Status.SUCCESS.value)
-
+        print(f'{msg}가 작업을 완료했습니다.')
     except:
         print(traceback.format_exc())
         logging.error(traceback.format_exc())
         change_status_job_no_check(db_conn, t_id, Status.FAILURE.value)
 
     finally:
-        db_conn_pool.putconn(db_conn_pool)
+        db_conn.commit()
+
+        db_conn_pool.putconn(db_conn)
 
 
 if __name__ == '__main__':
@@ -111,11 +106,18 @@ if __name__ == '__main__':
 
     initialize_data(conn)
 
-    conn_pool.putconn()
+    conn_pool.putconn(conn)
 
-    for i in range(1, 21):
-        msg = f'{i}번 스레드'
-        t = threading.Thread(target=batch_worker, name=f'Thread-{i}', args=(conn_pool, i, msg))
-        t.start()
+    threads = []
+
+    for j in range(3):
+        for i in range(1, 21):
+            message = f'{i}번 스레드'
+            t = threading.Thread(target=batch_worker, name=f'Thread-{i}', args=(conn_pool, i, message))
+            threads.append(t)
+            t.start()
+
+    for t in threads:
+        t.join()
 
     conn_pool.closeall()
