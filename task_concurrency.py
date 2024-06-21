@@ -82,7 +82,7 @@ def batch_worker(db_conn_pool, t_id, msg):
         print(f'{msg}가 작업을 시작했습니다.')
         change_status_job(db_conn, t_id, Status.PENDING.value, Status.RUNNING.value)
 
-        time.sleep(100)
+        time.sleep(300)
 
         change_status_job(db_conn, t_id, Status.RUNNING.value, Status.SUCCESS.value)
         print(f'{msg}가 작업을 완료했습니다.')
@@ -110,12 +110,11 @@ if __name__ == '__main__':
 
     threads = []
 
-    for j in range(3):
-        for i in range(1, 21):
-            message = f'{i}번 스레드'
-            t = threading.Thread(target=batch_worker, name=f'Thread-{i}', args=(conn_pool, i, message))
-            threads.append(t)
-            t.start()
+    for i in range(1, 21):
+        message = f'{i}번 스레드'
+        t = threading.Thread(target=batch_worker, name=f'Thread-{i}', args=(conn_pool, i, message))
+        threads.append(t)
+        t.start()
 
     for t in threads:
         t.join()
