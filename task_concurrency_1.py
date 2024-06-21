@@ -9,9 +9,6 @@ import psycopg2.pool
 import config
 
 
-# t_lock = threading.Lock()
-
-
 class Status(Enum):
     PENDING = "PN"
     RUNNING = "RN"
@@ -79,13 +76,11 @@ def initialize_data(db_conn):
 def change_status_job(db_conn, t_id, former_status, later_status):
     cursor = db_conn.cursor()
     cursor.execute(STATUS_CHANGE_QUERY, (later_status, t_id, former_status))
-    # db_conn.commit()
 
 
 def change_status_job_no_check(db_conn, t_id, later_status):
     cursor = db_conn.cursor()
     cursor.execute(STATUS_CHANGE_NO_CHECK_QUERY, (later_status, t_id))
-    # db_conn.commit()
 
 
 def batch_worker(db_conn_pool, b_id, t_id, msg):
@@ -111,19 +106,19 @@ def batch_worker(db_conn_pool, b_id, t_id, msg):
         if job:
             change_status_job(db_conn, b_id, Status.PENDING.value, Status.RUNNING.value)
 
-            time.sleep(1)
+            time.sleep(3)
 
             change_status_job(db_conn, b_id, Status.RUNNING.value, Status.SUCCESS.value)
 
-            time.sleep(1)
+            time.sleep(3)
 
             cursor.execute(INSERT_LOG_QUERY, (b_id, f'{Status.SUCCESS.value}으로 완료 되었습니다.'))
 
-            time.sleep(1)
+            time.sleep(3)
 
             change_status_job(db_conn, b_id, Status.SUCCESS.value, Status.PENDING.value)
 
-            time.sleep(1)
+            time.sleep(3)
 
             print(f'{msg}가 작업을 완료했습니다.')
         else:
@@ -140,7 +135,6 @@ def batch_worker(db_conn_pool, b_id, t_id, msg):
     finally:
         db_conn.commit()
         db_conn_pool.putconn(db_conn)
-        # t_lock.release()
 
 
 if __name__ == '__main__':
