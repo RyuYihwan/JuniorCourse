@@ -40,7 +40,7 @@ def set_log():
 def get_db_connection_pool():
     try:
         db_conn_pool = psycopg2.pool.ThreadedConnectionPool(
-            400, 1000,
+            40, 400,
             host='localhost',
             dbname='postgres',
             user=config.user,
@@ -97,8 +97,8 @@ def batch_worker(db_conn_pool, b_id, t_id, msg):
         print(f'{msg}가 작업을 시작했습니다.')
         # cursor2 = db_conn.cursor()
         # cursor2.execute('select * from test.work where id=1')
-        # work1 = cursor2.fetchone()
-        # print('{} : work.id=1 의 상태다'.format(work1))
+        # batch1 = cursor2.fetchone()
+        # print('{} : batch - 1 의 상태'.format(batch1))
         cursor.execute(SELECT_BATCH_JOB_QUERY, (b_id, Status.PENDING.value))
 
         job = cursor.fetchone()
