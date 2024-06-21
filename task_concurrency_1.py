@@ -8,7 +8,8 @@ import psycopg2.pool
 
 import config
 
-t_lock = threading.Lock()
+
+# t_lock = threading.Lock()
 
 
 class Status(Enum):
@@ -42,7 +43,7 @@ def set_log():
 def get_db_connection_pool():
     try:
         db_conn_pool = psycopg2.pool.ThreadedConnectionPool(
-            50, 400,
+            400, 1000,
             host='localhost',
             dbname='postgres',
             user=config.user,
@@ -78,43 +79,51 @@ def initialize_data(db_conn):
 def change_status_job(db_conn, t_id, former_status, later_status):
     cursor = db_conn.cursor()
     cursor.execute(STATUS_CHANGE_QUERY, (later_status, t_id, former_status))
-    db_conn.commit()
+    # db_conn.commit()
 
 
 def change_status_job_no_check(db_conn, t_id, later_status):
     cursor = db_conn.cursor()
     cursor.execute(STATUS_CHANGE_NO_CHECK_QUERY, (later_status, t_id))
-    db_conn.commit()
+    # db_conn.commit()
 
 
 def batch_worker(db_conn_pool, b_id, t_id, msg):
-    t_lock.acquire()
+    # t_lock.acquire()
     global job
     db_conn = db_conn_pool.getconn()
-    # db_conn.autocommit = False  # 트랜잭션을 수동으로 관리
+
+    # 수동 트랜젝션 관리
+    db_conn.autocommit = False
+
+    cursor = db_conn.cursor()
 
     try:
         print(f'{msg}가 작업을 시작했습니다.')
-        cursor = db_conn.cursor()
-
+        # cursor2 = db_conn.cursor()
+        # cursor2.execute('select * from test.work where id=1')
+        # work1 = cursor2.fetchone()
+        # print('{} : work.id=1 의 상태다'.format(work1))
         cursor.execute(SELECT_BATCH_JOB_QUERY, (b_id, Status.PENDING.value))
+
         job = cursor.fetchone()
+
         if job:
             change_status_job(db_conn, b_id, Status.PENDING.value, Status.RUNNING.value)
 
             time.sleep(1)
 
             change_status_job(db_conn, b_id, Status.RUNNING.value, Status.SUCCESS.value)
-            # db_conn.cursor().execute(INSERT_LOG_QUERY, (job[0], f'{job[1]}으로 완료 되었습니다.'))
-            db_conn.cursor().execute(INSERT_LOG_QUERY, (b_id, f'{Status.SUCCESS.value}으로 완료 되었습니다.'))
 
+            time.sleep(1)
+
+            cursor.execute(INSERT_LOG_QUERY, (b_id, f'{Status.SUCCESS.value}으로 완료 되었습니다.'))
 
             time.sleep(1)
 
             change_status_job(db_conn, b_id, Status.SUCCESS.value, Status.PENDING.value)
 
             time.sleep(1)
-            db_conn.commit()
 
             print(f'{msg}가 작업을 완료했습니다.')
         else:
@@ -126,13 +135,12 @@ def batch_worker(db_conn_pool, b_id, t_id, msg):
         logging.error(traceback.format_exc())
         change_status_job_no_check(db_conn, t_id, Status.FAILURE.value)
 
-        db_conn.cursor().execute(INSERT_LOG_QUERY, (b_id, f'{msg} failed'))
-        db_conn.commit()
+        cursor.execute(INSERT_LOG_QUERY, (b_id, f'{msg} failed'))
 
     finally:
         db_conn.commit()
         db_conn_pool.putconn(db_conn)
-        t_lock.release()
+        # t_lock.release()
 
 
 if __name__ == '__main__':
