@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 import threading
 import time
@@ -26,7 +27,6 @@ SELECT_BATCH_JOB_QUERY = "SELECT * FROM test.work WHERE id=%s AND status=%s FOR 
 
 CREATE_LOG_TABLE_QUERY = "CREATE TABLE IF NOT EXISTS test.tlog (log_id SERIAL PRIMARY KEY, job_id INT, content VARCHAR(32), execution_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
 DELETE_LOG_QUERY = "DELETE FROM test.tlog"
-# ALTER_ID_SEQUENCE = "ALTER SEQUENCE test.tlog_log_id_seq_id RESTART WITH 1;"
 DROP_LOG_TABLE_QUERY = "DROP TABLE IF EXISTS test.tlog;"
 
 INSERT_LOG_QUERY = "INSERT INTO test.tlog (job_id, content) VALUES (%s, %s);"
@@ -40,7 +40,7 @@ def set_log():
 def get_db_connection_pool():
     try:
         db_conn_pool = psycopg2.pool.ThreadedConnectionPool(
-            40, 400,
+            400, 800,
             host='localhost',
             dbname='postgres',
             user=config.user,
@@ -84,41 +84,41 @@ def change_status_job_no_check(db_conn, t_id, later_status):
 
 
 def batch_worker(db_conn_pool, b_id, t_id, msg):
-    # t_lock.acquire()
     global job
     db_conn = db_conn_pool.getconn()
 
     # 수동 트랜젝션 관리
     db_conn.autocommit = False
 
+    # 커서 획득
     cursor = db_conn.cursor()
 
     try:
         print(f'{msg}가 작업을 시작했습니다.')
-        # cursor2 = db_conn.cursor()
-        # cursor2.execute('select * from test.work where id=1')
-        # batch1 = cursor2.fetchone()
-        # print('{} : batch - 1 의 상태'.format(batch1))
         cursor.execute(SELECT_BATCH_JOB_QUERY, (b_id, Status.PENDING.value))
 
         job = cursor.fetchone()
 
         if job:
+            # 상태 변경 Pending -> Running
             change_status_job(db_conn, b_id, Status.PENDING.value, Status.RUNNING.value)
 
-            time.sleep(3)
+            time.sleep(5)
 
+            # 상태 변경 Running -> Success
             change_status_job(db_conn, b_id, Status.RUNNING.value, Status.SUCCESS.value)
 
-            time.sleep(3)
+            time.sleep(5)
 
+            # 성공 로그 남김
             cursor.execute(INSERT_LOG_QUERY, (b_id, f'{Status.SUCCESS.value}으로 완료 되었습니다.'))
 
-            time.sleep(3)
+            time.sleep(5)
 
+            # 성공 로그 기록 후 다른 스레드 접근을 위해 상태 변경 Success -> Pending
             change_status_job(db_conn, b_id, Status.SUCCESS.value, Status.PENDING.value)
 
-            time.sleep(3)
+            time.sleep(5)
 
             print(f'{msg}가 작업을 완료했습니다.')
         else:
@@ -150,6 +150,8 @@ if __name__ == '__main__':
 
     threads = []
 
+    prev_time = datetime.now()
+
     # 각 batch job 마다 20개씩 스레드를 만들어서 실행.
     # 이후 batch job 실행이 전부 성공 했는지 확인.
     for i in range(1, 21):
@@ -163,3 +165,7 @@ if __name__ == '__main__':
         t.join()
 
     conn_pool.closeall()
+
+    diff = datetime.now() - prev_time
+
+    print('{} 분 소요: '.format(round(diff.seconds / 60, 2)))
